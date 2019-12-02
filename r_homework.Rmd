@@ -1,0 +1,695 @@
+---
+title: "R FINVIZ Visualization"
+author: "朱晓芸 2019100447  周妮 2019100443"
+date: "2019-11-26"
+output: 
+  html_document: 
+    highlight: haddock
+    theme: yeti
+    toc: yes
+---
+<style type="text/css">
+	#header {
+	    text-align: center;
+	}
+  p{
+    font-size:5px;
+  }
+</style>
+
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE,fig.align = 'center')
+#install.packages('dplyr')
+#install.packages('plyr')
+#install.packages('tidyverse')
+#install.packages('lubridate')
+#install.packages('xts')
+#install.packages('quantmod')
+#install.packages('data.table')
+#install.packages('portfolio')
+#install.packages('RColorBrewer') 
+#install.packages('pheatmap')
+#install.packages('ggplot2')
+#install.packages('cowplot')
+#install.packages('reshape')
+library(dplyr)
+library(plyr)
+library(tidyverse)
+library(lubridate)
+library(xts)
+library(quantmod)
+library(data.table)
+library(portfolio)
+library(RColorBrewer) 
+library(pheatmap)
+library(ggplot2)
+library(cowplot)
+library(plotly)
+library(reshape)
+library(knitr)
+library(gridExtra)
+# 设置数据文件夹所在路径
+path <- "C:/Users/Olivia/Desktop/data"
+
+```
+***
+
+## <font size=5>功能1：个股价格趋势与技术分析
+
+ <font size=3 face="楷体">
+&emsp;&emsp;绘制日K线图，添加交易量、MACD、SMA指标
+ </font>
+```{r}
+#从锐思下载数据
+price1=read.delim(paste(path,"function1.txt",sep='/'),header=T)
+#数据：function1.txt
+#数据来源：RESSET数据库——RESSET 股票——股票综合数据——日股票综合数据
+#stkcd      股票代码     Stock Code
+#lstknm      最新股票名称     Latest Stock Name
+#date      日期     Date
+#prevclpr      前收盘价     Previous Close Price
+#oppr      开盘价     Open Price
+#hipr      最高价     High Price
+#lopr      最低价     Low Price
+#clpr      收盘价     Close Price
+#adjclpr1      复权价1     Adjusted Price1
+#trdvol      成交量     Trading Volume
+#dret      日收益率     Daily Return
+date=as.Date(price1$date,format="%Y-%m-%d")
+price1<-select(price1,"date","oppr","hipr","lopr","clpr","adjclpr1","trdvol")%>%
+  dplyr::rename('000001.SS.Open' = 'oppr','000001.SS.High'='hipr','000001.SS.Low'='lopr','000001.SS.Close'='clpr','000001.SS.Adjusted'='adjclpr1','000001.SS.Volume'='trdvol')
+price_xts <- xts(as.data.table(price1)[,!1],order.by = date) 
+chartSeries(last(price_xts, '6 months'),theme='white',up.col='green',dn.col='red',TA="addVo();addMACD();addSMA(n=20)")
+# 绘制最近6个月的k线图，添加交易量、MACD、SMA指标
+```
+
+```{r,message=F}
+# 从yahoo下载数据
+price<-getSymbols("000001.ss",from = "2016-06-01",to = Sys.Date(),src = "yahoo",auto.assign=FALSE)
+# 上证综指
+#查看最近8天的数据
+kable(tail(price,n=8),align='c')
+# 绘制最近6个月的k线图，添加交易量指标
+chartSeries(last(price, '6 months'),theme='white',up.col='green',dn.col='red',TA="addVo()")
+
+```
+
+### <font size=4>技术分析
+
+```{r}
+mytheme<-chartTheme(theme="white",up.col="red",up.border="black",dn.col="green",dn.border="black")
+chartSeries(price,subset="last 6 months",TA=(c(addVo(),addBBands())),theme=mytheme)
+#为当前图标加上MACD指标
+#MACD：异同移动平均线，由快、慢均线的离散、聚合表征当前的多空状态和股价可能的发展变化趋势
+addMACD()
+#SMA20：20日移动平均线
+addSMA(n=20)
+#CCI：顺势指标，测量股价是否已超出常态分布范围
+addCCI()
+setTA()#使用chartSeries里面的默认值
+
+```
+
+ ***
+## <font size=5>功能2：市场总体表现
+ <font size=3 face="楷体">
+&emsp;&emsp;市场涨跌幅，新高、新低，SMA50、SMA100表现
+ </font>
+ 
+### <font size=4>功能2.1：涨跌统计
+ <font size=3 face="楷体">
+&emsp;&emsp;交易日内上涨/下跌股票数
+ </font>
+```{r,fig.width=6, fig.height=3}
+TradeStock=read.delim(paste(path,"function2.1.txt",sep='/'),header=T)
+#数据：function2.1.txt
+#数据来源：RESSET数据库——RESSET 股票——行情与分配——股票最新行情表现
+#stkcd           股票代码            Stock Code
+#lstknm          最新股票名称        Latest Stock Name
+#trddt           日期                Trade Date
+#prevclpr        前收盘价            Previous Close Price
+#clpr            收盘价              Close Price
+#clloprrec12mon  十二个月收盘最低价  Close Low Price Recent 12 Month
+#clhiprrec12mon  十二个月收盘最高价  Close High Price Recent 12 Month
+#计算涨跌
+table1<-TradeStock%>%
+  mutate(result=clpr-prevclpr)%>%
+  mutate(position=(if_else(result>0,'Advancing',if_else(result==0,'Steady','Decining'))))%>%
+  mutate(value=1)
+#定义标识向量
+color<-c('darkred','grey','darkgreen')
+symbol<-c('Advancing','Steady','Declining')
+#统计涨跌数与比例
+a <- transform(table1,trend=if_else(result>0,1,if_else(result<0,-1,0)))
+b <- ddply(a,"trend",summarise,number=length(lstknm))
+c<-ddply(b,'number',.fun=function(x){transform(x, percentage=with(x,ave(number,trend,FUN=sum)*100/sum(b$number)))})
+percentage<-paste(round(as.numeric(as.character(c$percentage)),1),'%',sep='')
+df<-data.frame(symbol,number=c(b$number[3],b$number[2],b$number[1]),percentage=c(percentage[3],percentage[1],percentage[2]),value=c(1,1,1))
+df<-data.frame(df,label=paste(df$number,df$symbol,sep=' '))
+df$symbol<-factor(df$symbol,levels=symbol)
+#绘制涨跌情况分布图
+ggplot(df,aes(x=df$value,y=df$number,fill=symbol)) +
+  scale_fill_manual(values = color)+
+  geom_bar(stat='identity',position = position_stack(reverse=T))+#堆叠图
+  geom_text(label=levels(df$percentage),position = position_stack(0.0),vjust=0.3, hjust =-3.8,color="white", size=3.8,check_overlap = TRUE)+
+  geom_text(label=levels(df$label),position = position_stack(0.0),vjust=-1.5, hjust =-1,color="black", size=4,check_overlap = TRUE)+
+  theme_minimal()+
+  coord_flip()+ #横向 
+  labs(x='',y='')+
+  theme(legend.position='none')+  
+  theme(panel.grid = element_blank())+
+  theme(axis.text = element_blank())+
+  ggtitle("Advancing / Declining") +
+  xlim(-4,4)
+```
+
+ ***
+### <font size=4>功能2.2：新高、新低统计
+ <font size=3 face="楷体">
+&emsp;&emsp;交易日内股票价格达新高/新低的股票数
+ </font>
+
+```{r,fig.width=6, fig.height=3}
+#计算New high&New low
+table2<-TradeStock%>%
+  mutate(position=(if_else(TradeStock$clpr==TradeStock$clhiprrec12mon,'New High',if_else(TradeStock$clpr==TradeStock$clloprrec12mon,'New Low','Null'))))%>%
+  mutate(value=1)
+#重新定义标识
+color<-c('darkred','darkgreen')
+symbol<-c('New High','New Low')
+#统计新高新低情况
+a <- transform(table2,trend=if_else(TradeStock$clpr==TradeStock$clhiprrec12mon,1,if_else(TradeStock$clpr==TradeStock$clloprrec12mon,-1,0)))
+b <- ddply(a,"trend",summarise,number=length(lstknm))
+b<-b[-2,]
+c<-ddply(b,'number',.fun=function(x){transform(x, percentage=with(x,ave(number,trend,FUN=sum)*100/sum(b$number)))})
+df<-data.frame(symbol,number=c$number,percentage=c$percentage,value=c(1,1))
+percentage<-round(as.numeric(as.character(c$percentage)),1)
+percentage<-paste(percentage,'%',sep='')
+df<-data.frame(symbol,number=df$number,percentage=percentage,value=c(1,1))
+df<-data.frame(df,label=paste(df$number,df$symbol,sep=' '))
+#绘制新高新低图
+ggplot(df,aes(x=df$value,y=df$number,fill=symbol)) +
+  scale_fill_manual(values = color)+
+  geom_bar(stat='identity',position = position_stack(reverse=T))+
+  geom_text(label=df$percentage,position = position_stack(0.5),color="white", size=4,check_overlap = TRUE)+
+  geom_text(label=df$label,position = position_stack(0.5),vjust=-1.5,color="black", size=4,check_overlap = TRUE)+
+  theme_minimal()+
+  coord_flip()+ 
+  labs(x='',y='')+
+  theme(legend.position='none')+ 
+  theme(panel.grid = element_blank())+
+  theme(axis.text = element_blank())+
+  ggtitle("New High / New Low") +
+  xlim(-4,4)
+```
+
+ ***
+### <font size=4>功能2.3：日均线分析
+ <font size=3 face="楷体">
+&emsp;&emsp;交易日内股票价格高于/低于移动平均线（SMA）的股票数
+ </font>
+
+```{r ,fig.width=6, fig.height=3}
+table3=read.delim(paste(path,"function2.2.txt",sep='/'),header=T)
+#数据：function2.2.txt
+#数据来源：RESSET数据库——RESSET 股票——股票综合数据——日股票综合数据
+#stkcd      股票代码     Stock Code
+#lstknm      最新股票名称     Latest Stock Name
+#date      日期     Date
+#clpr      收盘价     Close Price
+#对数据进行重新排序
+setcolorder(table3,c('date','stkcd','lstknm','clpr'))
+table3<-table3[complete.cases(table3$clpr),]
+#计算50日与100均值
+table3<-table3%>%
+  mutate(SMA1=SMA(table3$clpr,n=50))%>%
+  mutate(SMA2=SMA(table3$clpr,n=100))
+symbol<-c('Above','Below')
+SMA50<-table3[,-7]%>%
+  filter(date=='2019-09-30')
+SMA100<-table3[,-6]%>%
+  filter(date=='2019-09-30')
+##50日均线
+a <- transform(SMA50,trend=if_else(SMA50$clpr>SMA50$SMA1,1,if_else(SMA50$clpr<SMA50$SMA1,-1,0)))
+b <- ddply(a,"trend",summarise,number=length(lstknm))
+c<-ddply(b,'number',.fun=function(x){transform(x, percentage=with(x,ave(number,trend,FUN=sum)*100/sum(b$number)))})
+df<-data.frame(symbol,number=c$number,percentage=c$percentage,value=c(1,1))
+percentage<-round(as.numeric(as.character(c$percentage)),1)
+percentage<-paste(percentage,'%',sep='')
+df<-data.frame(symbol,number=df$number,percentage=percentage,value=c(1,1))
+df<-data.frame(df,label=paste(df$number,df$symbol,sep=' '))
+#绘制SMA50统计情况
+ggplot(df,aes(x=df$value,y=df$number,fill=symbol)) +
+  scale_fill_manual(values = color)+
+  geom_bar(stat='identity',position = position_stack(reverse=T))+
+  geom_text(label=levels(df$percentage),position = position_stack(0.2),color="white", size=3.7,check_overlap = TRUE)+
+  geom_text(label=levels(df$label),vjust=-1.5, position = position_stack(0.2),color="black", size=4,check_overlap = TRUE)+
+  theme_minimal()+
+  coord_flip()+ 
+  labs(x='',y='')+
+  theme(legend.position='none')+  
+  theme(panel.grid = element_blank())+
+  theme(axis.text = element_blank())+
+  ggtitle("SMA50") +
+  xlim(-4,4)
+##100日均线
+a <- transform(SMA100,trend=if_else(SMA100$clpr>SMA100$SMA2,1,if_else(SMA100$clpr<SMA100$SMA2,-1,0)))
+b <- ddply(a,"trend",summarise,number=length(lstknm))
+c<-ddply(b,'number',.fun=function(x){transform(x, percentage=with(x,ave(number,trend,FUN=sum)*100/sum(b$number)))})
+df<-data.frame(symbol,number=c$number,percentage=c$percentage,value=c(1,1))
+percentage<-round(as.numeric(as.character(c$percentage)),1)
+percentage<-paste(percentage,'%',sep='')
+df<-data.frame(symbol,number=df$number,percentage=percentage,value=c(1,1))
+df<-data.frame(df,label=paste(df$number,df$symbol,sep=' '))
+#绘制SMA100统计情况
+ggplot(df,aes(x=df$value,y=df$number,fill=symbol)) +
+  scale_fill_manual(values = color)+
+  geom_bar(stat='identity',position = position_stack(reverse=T))+
+  geom_text(label=levels(df$percentage),position = position_stack(0.2),color="white", size=3.7,check_overlap = TRUE)+
+  geom_text(label=levels(df$label),vjust=-1.5, position = position_stack(0.2),color="black", size=4,check_overlap = TRUE)+
+  theme_minimal()+
+  coord_flip()+ 
+  labs(x='',y='')+
+  theme(legend.position='none')+  
+  theme(panel.grid = element_blank())+
+  theme(axis.text = element_blank())+
+  ggtitle("SMA100") +
+  xlim(-4,4)
+```
+
+ ***
+## <font size=5> 功能3：不同signal内股票表现
+ <font size=3 face="楷体">
+ 不同分类标识（signal）：  
+&emsp;（1）Top Gainers，Top Losers：当日收益率为最高或最低  
+&emsp;（2）New High，New Low：股票价格达到一年内新高或新低  
+&emsp;（3）Overbought，Oversold：股票价格上涨或下跌幅度高于前两周  
+&emsp;（4）Unusual Volume：存在异常高交易量的股票  
+&emsp;&emsp;&emsp;&emsp;Most Volatile：最具波动性的股票  
+&emsp;&emsp;&emsp;&emsp;Most Active：交易最活跃的股票  
+ </font>
+```{r}
+signal=read.delim(paste(path,"function3.1.txt",sep='/'),header=T)
+#数据：function3.1.txt
+#数据来源：RESSET数据库——RESSET 股票——行情与分配——股票最新行情表现
+#stkcd      股票代码     Stock Code
+#lstknm      最新股票名称     Latest Stock Name
+#trddt      交易日     Trading Date
+#clpr      收盘价     Close Price
+#trdvol      成交量     Trading Volume
+#chgpct      涨跌幅     Change Percent
+#clhiprrec12mon      十二个月收盘最高价     Highest Close Price in the Recent 12 Months
+#clloprrec12mon      十二个月收盘最低价     Lowest Close Price in the Recent 12 Months
+###分类标识1：Top Gainers&Top Losers
+signal1<-data.frame(signal)%>%
+  arrange(desc(chgpct))
+table<-select(signal1,Ticker='lstknm',Last='clpr',Change='chgpct',Volume='trdvol')
+table$Change<-paste(table$Change,'%',sep='')
+table1<-first(table,n=6)%>%
+mutate(signal="Top Gainers")
+table2<-last(table,n=6)%>%
+  mutate(signal="Top Losers")
+###分类标识2：New High&New Low
+signal2<-signal%>%
+  mutate(position=(if_else(signal$clpr==signal$clhiprrec12mon,'New High',if_else(signal$clpr==signal$clloprrec12mon,'New Low','Null'))))%>%
+  arrange(position,desc(chgpct))
+signal2<-filter(signal2,signal2$position=='New High'|signal2$position=='New Low')
+table<-select(signal2,Ticker='lstknm',Last='clpr',Change='chgpct',Volume='trdvol',signal='position')
+table$Change<-paste(table$Change,'%',sep='')
+table1<-rbind(table1,table[1:4,])
+table2<-rbind(table2,last(table,n=4))
+###分类标识3：Overbought&Oversold
+sign=read.delim(paste(path,"function3.2.txt",sep='/'),header=T)
+#数据：function3.2.txt
+#数据来源：RESSET数据库——RESSET 股票——股票综合数据——日股票综合数据
+#stkcd      股票代码     Stock Code
+#lstknm      最新股票名称     Latest Stock Name
+#date      日期     Date
+#clpr      收盘价     Close Price
+setcolorder(sign,c('date','stkcd','lstknm','clpr'))
+sign<-sign[complete.cases(sign$clpr),]
+sign<-sign%>%
+  mutate(RSI=RSI(sign$clpr,n=14,maType = SMA))%>%
+  filter(date=='2019-09-30')%>%
+  inner_join(signal,sign,by='stkcd')%>%
+  arrange(desc(RSI))
+table<-select(sign,Ticker='lstknm.y',Last='clpr.y',Change='chgpct',Volume='trdvol')
+table$Change<-paste(table$Change,'%',sep='')
+table1<-rbind(table1,(first(table,n=2)%>%mutate(signal='Overbought')))
+table2<-rbind(table2,(last(table,n=2)%>%mutate(signal='Oversold')))
+###分类标识4：Unusual Volume&Most Volatile&Most Active
+#由于我国交易存在涨跌幅限制，所以异常交易量不按高位异常判断，仅按高交易低收益判断
+
+signal3<-signal%>%
+  arrange(desc(trdvol))%>%
+  filter(chgpct<1&chgpct>-1)
+table<-select(signal3,Ticker='lstknm',Last='clpr',Change='chgpct',Volume='trdvol')
+table$Change<-paste(table$Change,'%',sep='')
+table1<-rbind(table1,(table[1:4,]%>%mutate(signal='Unusual Volume')))
+
+sign=read.delim(paste(path,"function3.3.txt",sep='/'),header=T)
+#数据：function3.3.txt
+#数据来源：RESSET数据库——RESSET 股票——股票综合数据——日股票综合数据
+#stkcd      股票代码     Stock Code
+#lstknm      最新股票名称     Latest Stock Name
+#hipr      最高价     Highest Price
+#lopr      最低价     Lowest Price
+sign<-sign%>%
+  mutate(result=sign$hipr-sign$lopr)%>%
+  inner_join(signal,sign,by='stkcd')%>%
+  arrange(desc(result))
+table<-select(sign,Ticker='lstknm.y',Last='clpr',Change='chgpct',Volume='trdvol')
+table$Change<-paste(table$Change,'%',sep='')
+table2<-rbind(table2,(table[1:2,]%>%mutate(signal='Most Volatile')))
+signal4<-signal%>%
+  arrange(desc(trdvol))
+table<-select(signal4,Ticker='lstknm',Last='clpr',Change='chgpct',Volume='trdvol')
+table$Change<-paste(table$Change,'%',sep='')
+table2<-rbind(table2,(table[1:2,]%>%mutate(signal='Most Active')))
+
+#合并表
+table1<-mutate(table1,Index=c(1:16))
+table2<-mutate(table2,Index=c(1:16))
+table<-inner_join(table1,table2,by='Index')
+table<-table[,-6]
+#table
+kable(table,table.attr = "class=\"table table-bordered\"", align="c",booktabs=T)
+        
+```
+
+***
+## <font size=5>功能4：绘制股票板块层级图
+ <font size=3 face="楷体">
+ &emsp;&emsp;按行业及细分行业分类，绘制板块层级图，个股板块颜色与涨跌有关（收益率低→高：绿-黑-红），板块大小与板块/股票市值成比例  
+注：行业分类    
+ </font>
+<font size=2 face="楷体">
+&emsp;&emsp;按证监会行业(csrciccd1)进行分类：
+&emsp;&emsp;A-农、林、牧、渔业；B-采矿业；C-制造业；D-电力、热力、燃气及水生产和供应业；E-建筑业；F-批发和零售业；G-交通运输、仓储和邮政业；H-住宿和餐饮业；I-信息传输、软件和信息技术服务业；J-金融业；K-房地产业；L-租赁和商务服务业；M-科学研究和技术服务业；N-水利、环境和公共设施管理业；O-居民服务、修理和其他服务业；P-教育；Q-卫生和社会工作；R-文化、体育和娱乐业；S-综合
+ </font>
+
+```{r}
+#绘制板块层级图 tree map
+
+#行业与收益率数据
+DRET=read.delim(paste(path,"function4_DRESSTK.txt",sep='/'),header=T)
+#数据：function4_DRESSTK.txt
+#数据来源：RESSET数据库——RESSET 股票——股票综合数据——日股票综合数据
+#stkcd      股票代码     Stock Code
+#lstknm      最新股票名称     Latest Stock Name
+#csrciccd1      证监会行业门类代码     First Level Code of Csrc Ic
+#csrciccd2      证监会行业大类代码     Second Level Code of Csrc Ic
+#dret      日收益率     Daily Return
+
+#市值
+DMV=read.delim(paste(path,"function4_DMV.txt",sep='/'),header=T)
+#数据：function4_DMV.txt
+#数据来源：RESSET数据库——RESSET 股票——市值——日市值
+#stkcd      股票代码     Stock Code
+#dmc      日总市值     Daily Market Capitalization
+# 合并原始数据表
+data_raw <- inner_join(DRET,DMV,by="stkcd")[c("stkcd","lstknm","csrciccd1","csrciccd2","dret","dmc")]
+
+#行业名称
+#数据:function4_CSRCIND.txt
+#数据来源：RESSET数据库——RESSET 股票——股票综合数据——日股票综合数据
+CSRCIND <- read.delim(paste(path,"function4_CSRCIND.txt",sep='/'),header=T) %>%
+  subset(select=c(csrciccd1,csrcicnm1,csrciccd2,csrcicnm2)) %>%
+  unique()
+CSRCIND <- CSRCIND[order(CSRCIND$csrciccd2),] %>% subset(select=-csrciccd1)
+data_raw=merge(data_raw,CSRCIND,by="csrciccd2")
+
+#（1）全市场各行业板块层级图：区分行业大门类内细分行业收益与市值分布
+#细分行业收益使用市值加权收益率
+industry2_dret <- ddply(data_raw,"csrciccd2",summarize,wm_dret=weighted.mean(dret, dmc),sum_mv=sum(dmc))
+data_map_ind <- merge(industry2_dret,unique(data_raw[c("csrciccd1","csrciccd2","csrcicnm1","csrcicnm2")]),by="csrciccd2",all.industry2_dret=T,all.data_raw=F)
+map.market(id = data_map_ind$csrcicnm2,
+           area = data_map_ind$sum_mv,  #面积与市值成比例
+           group = data_map_ind$csrcicnm1, #按行业门类分类
+           lab   = c("group"=TRUE, "id"=TRUE),
+           color = data_map_ind$wm_dret)
+#（2）具体门类（B-采矿业）内各股票收益与市值分布
+data_map <- subset(data_raw, csrciccd1 == 'B') 
+map.market(id = data_map$lstknm,
+           area = data_map$dmc,  #面积与市值成比例
+           group = data_map$csrcicnm2,
+           main  = "Map of the Industry",
+           lab   = c("group"=TRUE, "id"=TRUE),
+           color = data_map$dret)
+# （3）显示行业门类内各细分行业中市值前20%的公司
+quantiles<-tapply(data_map$dmc,factor(data_map$csrciccd2),function(x) {return(quantile(x,probs=0.8))})
+quantiles<-as.data.frame(as.matrix(quantiles)) %>% 
+  mutate(csrciccd2=rownames(quantiles))
+data_map2 <- merge(data_map,quantiles,by="csrciccd2",all.data_map=T) %>%
+  transform(show_name = ifelse(dmc>=V1,as.character(data_map$lstknm)," "))
+map.market(id = data_map2$lstknm,
+           area = data_map2$dmc,  #面积与市值成比例
+           group = data_map2$show_name, #分股票显示:仅显示市值最高的20%的公司
+           color = data_map2$dret)
+```
+
+ ***
+## <font size=5>功能5：绘制股票行业收益分布气泡图
+ <font size=3 face="楷体">
+&emsp;&emsp;一个气泡代表一只股票，纵轴（气泡圆心位置）表示涨跌幅，气泡大小为市值，横轴为不同行业（sector），不同行业也以颜色区分。
+ </font>
+```{r warning=FALSE}
+# 功能5 气泡图
+data2=subset(data_raw, csrciccd1 == 'A')
+id<- 1:nrow(data2)
+data_bubble <- cbind(data2[order(data2$csrciccd1,data2$csrciccd2),],id)
+# 使用symbols函数
+symbols(data_bubble$id,data_bubble$dret,circle=sqrt(data_bubble$dmc),inches=0.8,bg=data_bubble$csrciccd2,fg="white",
+        main="行业收益分布气泡图",xlab="Industry",ylab="Return")
+text(data_bubble$id,data_bubble$dret,data_bubble$lstknm,cex=0.5)
+# 各细分行业为不同颜色
+# 使用plotly包
+plot_ly(data_bubble,x=~id,y=~dret,color=~csrcicnm2,size=~dmc,text=~lstknm,marker = list(sizeref=0.1),
+        type="scatter",mode="markers",colors="Set3") %>% 
+  layout(
+  title = '气泡图',
+  xaxis = list( title = "Industries", family='Courier New',size=22, color='#7f7f7f'),
+  yaxis = list(title = "Dret", family='Courier New', size=22, color='#7f7f7f', tickformat = '.1%')
+)
+
+```
+
+***
+## <font size=5>功能6：各行业收益表现统计与比较
+ <font size=3 face="楷体">
+&emsp;&emsp;各行业收益统计排名（行业收益率=行业内所有股票的市值加权收益率）。
+ </font>
+```{r}
+#功能6 各行业收益统计（行业收益率=行业内所有股票的市值加权收益率）
+industry_dret <- ddply(data_raw,"csrcicnm1",summarize,wm_dret=weighted.mean(dret, dmc))
+industry_dret <- industry_dret[with(industry_dret, order(wm_dret)), ]
+plot6<-ggplot(data=industry_dret, mapping=aes(x=reorder(csrcicnm1,wm_dret),y=wm_dret))+
+  geom_bar(stat="identity",fill=colorRampPalette(c("darkgreen","darkred"))(18)) +
+  theme(panel.background=element_rect(fill='transparent')) +
+  geom_text(mapping = aes(label = round(industry_dret$wm_dret, digits = 4)),size=3,vjust=0.5,hjust=1) +
+  ylim(-0.02,0.015) +
+  ggtitle("1-Day Performance of Industries") +
+  labs(y = "1-day Return",x="Industry") +
+  coord_flip()
+ggplotly(plot6)
+```
+
+***
+## <font size=5>功能7： 行业表现——估值
+ <font size=3 face="楷体">
+&emsp;&emsp;行业表现统计：股票数、总市值、PE、行业涨跌幅、交易量。
+ </font>
+```{r}
+#行业与PE数据
+PE=read.delim(paste(path,"function7.1.txt",sep='/'),header=T)
+#数据：function7.1.txt
+#数据来源：RESSET数据库——RESSET 股票——市盈率——行业市盈率_2001年证监会行业标准——证监会门类行业市盈率
+#csrciccd1      证监会行业门类代码     First Level Code of Csrc Ic
+#csrcicnm1      证监会行业门类名称     First Level Name of Csrc Ic
+#peratio_ind      行业市盈率     Price-to-earning Ratio of Industry
+#comnum      公司数     Company Number
+#行业与市值数据
+DMV=read.delim(paste(path,"function7.2.txt",sep='/'),header=T)
+#数据：function7.2.txt
+#数据来源：RESSET数据库——RESSET 股票——市值——行业市值——证监会门类行业日市值
+#csrciccd1      证监会行业门类代码     First Level Code of Csrc Ic
+#dmc_ind      行业日总市值     Industry Daily Market Capitalization
+stock=read.delim(paste(path,"function7.3.txt",sep='/'),header=T)
+#数据：function7.3.txt
+#数据来源：RESSET数据库——RESSET 股票——股票综合数据——日股票综合数据
+#csrciccd1      证监会行业门类代码     First Level Code of Csrc Ic
+#csrciccd2      证监会行业大类代码     Second Level Code of Csrc Ic
+#trdvol      成交量     Trading Volume
+#dret      日收益率     Daily Return
+stock<-stock[complete.cases(stock$trdvol),]%>%
+  arrange(csrciccd1)
+Volume<-tapply(stock$trdvol,factor(stock$csrciccd1),sum)
+Change<-paste(round((tapply(stock$dret,factor(stock$csrciccd1),sum)/PE$comnum*100),2),'%',sep='')
+table<-data.frame(No.=PE$csrciccd1,Name=PE$csrcicnm1,Stock=PE$comnum,MarketCap=DMV$dmc_ind,PE=PE$peratio_ind,Change,Volume)
+kable(table,align='c',table.attr = "class=\"table table-bordered\"",row.names = F)
+```
+
+***
+## <font size=5>功能8：绘制细分行业内个股收益热度图
+ <font size=3 face="楷体">
+&emsp;&emsp;绘制各行业股票涨跌热度图，收益率低→高：绿-黑-红。
+ </font>
+```{r warning=FALSE}
+
+# 功能8：绘制热度图
+# 选择细分行业：如G-交通运输、仓储和邮政业
+data_ind <- subset(data_raw, csrciccd1 == 'G')
+data2<-spread(data_ind,csrcicnm2,dret) %>%
+  subset(select=c(-stkcd,-csrciccd1,-csrcicnm1,-csrciccd2,-dmc))
+data2<-t(data.frame(data2,row.names=1))
+
+num=0
+plots <- list()
+for (i in rownames(data2)){
+  subdata1=data2[i,]
+  a<-na.omit(subdata1)
+  b<-sort(as.numeric(a))
+  if (length(b)>1){
+    num=num+1
+    plot <- paste("plot",num,sep = "")
+    ma=matrix(t(b),1,length(b))
+    rownames(ma) = i #细分行业名称
+    plots[[num]]<-pheatmap(ma,cluster_rows = F,cluster_cols = F,show_rownames=T,border=NA,silent=T,
+                           color=colorRampPalette(c("green","black","red"))(1000))$gtable
+  }
+}
+require(cowplot)
+theme_set(theme_cowplot(font_size=8)) # reduce default font size
+plot_grid(plotlist = plots,ncol=1,align="v",scale=rep(0.8,times=num))
+```
+
+***
+## <font size=5>功能9：绘制细分行业内个股收益月度每日热度图
+ <font size=3 face="楷体">
+&emsp;&emsp;绘制一个月内各交易日的行业涨跌热度图，收益率低→高：绿-黑-红。
+ </font>
+
+```{r warning=FALSE}
+Return=read.delim(paste(path,"function9.1.txt",sep='/'),header=T)
+#数据：function9.1.txt
+#数据来源：RESSET数据库——RESSET 股票——股票综合数据——日股票综合数据
+#comcd      上市公司代码     Listed Company Code
+#csrciccd1      证监会行业门类代码     First Level Code of Csrc Ic
+#csrciccd2      证监会行业大类代码     Second Level Code of Csrc Ic
+#date      日期     Date
+#dret      日收益率     Daily Return
+DMV=read.delim(paste(path,"function9.2.txt",sep='/'),header=T)
+#数据：function9.2.txt
+#数据来源：RESSET数据库——RESSET 股票——市值——日市值
+#comcd      上市公司代码     Listed Company Code
+#csrciccd1      证监会行业门类代码     First Level Code of Csrc Ic
+#csrciccd2      证监会行业大类代码     Second Level Code of Csrc Ic
+#date      日期     Date
+#dmc      日总市值     Daily Market Capitalization
+data_1<-inner_join(Return,DMV,by=c('comcd','date','csrciccd1'))%>%
+  select('comcd','date','csrciccd1','dret','dmc')
+# 添加行业名
+CSRCIND <- read.delim(paste(path,"function4_CSRCIND.txt",sep='/'),header=T) %>%
+  subset(select=c(csrciccd1,csrcicnm1)) %>%
+  unique()
+# 与行业合并
+data_1<-merge(data_1,CSRCIND,by="csrciccd1")
+data_1$dret<-as.numeric(as.character(data_1$dret))
+#处理异常值，降低异常收益对热度图整体颜色区分度的影响
+data_1$dret[!( data_1$dret>=-1 & data_1$dret<=1 )]<-NA
+data_1<-data_1[complete.cases(data_1$dret),]%>%
+  mutate(dret_1=dret*dmc)
+a<-tapply(data_1$dmc,list(factor(data_1$date),factor(data_1$csrcicnm1)),sum)
+b<-tapply(data_1$dret_1,list(factor(data_1$date),factor(data_1$csrcicnm1)),sum)
+industry_dret<-t(as.matrix(round(b/a*100,0)))
+#breaks
+bk <- c(seq(-6,-0.1,by=0.01),seq(0,6,by=0.01))
+pheatmap(industry_dret,cluster_rows = F,cluster_cols = F,show_rownames=T,
+         border_color ='grey',
+         color = c(colorRampPalette(colors = c("green","black"))(length(bk)/2),colorRampPalette(colors = c("black","red"))(length(bk)/2)),
+         legend_breaks=seq(-6,6,2), breaks=bk,
+         display_numbers = industry_dret,legend = T)
+```
+
+***
+## <font size=5>功能10：期货收益率排名统计
+ <font size=3 face="楷体">
+&emsp;&emsp;绘制不同标的资产的期货收益率排名条形图，收益率低→高：绿-黑-红。
+ </font>
+```{r}
+future=read.delim(paste(path,"function10.txt",sep='/'),header=T)
+#数据：function10.txt
+#数据来源：RESSET数据库——RESSET 期货——期货交易行情——期货行情表
+#enddt      截止日期     End Date
+#contnm      合约名称     Contract Name
+#conflg      连续标志     Continuum Flag
+#contudl      合约标的     Contract Underlying
+#contudlnm      合约标的名称     Contract Underlying Name
+#clpr      收盘价     Close Price
+#trdvol      成交量     Trade Volume
+#trdsum      成交额     Trade Sum
+#各股指期货收益率统计
+future<-future[complete.cases(future$clpr),]
+#2019-09-26期货收益率
+future1<-future%>%
+  filter(future$enddt=='2019-09-26')
+future1<-future1[!duplicated(future1$contnm), ]#去除重复值
+#2019-09-27期货收益率
+future2<-future%>%
+  filter(future$enddt=='2019-09-27')
+future2<-future2[!duplicated(future2$contnm), ]
+future<-inner_join(future1,future2,by='contnm')%>%
+  select(contudlnm='contudlnm.x',p_clpr='clpr.x',clpr='clpr.y',exchnm='exchnm.x')
+#选取在上海交易所交易的期货
+future<-future%>%
+  filter(future$exchnm=='上海期货交易所')
+#计算涨跌幅
+future<-mutate(future,dret=(future$clpr-future$p_clpr)/future$p_clpr)
+future<-future[complete.cases(future$dret),]
+future<-future[with(future,order(dret)),]
+#绘制期货收益率图
+plot10 <- ggplot(future, mapping=aes(x=reorder(contudlnm,dret),y=dret))+
+  geom_bar(stat="identity",width=0.7,fill=colorRampPalette(c("darkgreen","darkred"))(16))+
+  theme(panel.background=element_rect(fill='transparent')) +
+  geom_text(mapping = aes(label = round(future$dret, digits = 4)),size=3,vjust=0.5,hjust=1) +
+  ggtitle("1 DAY RELATIVE PERFORMANCE") +
+  labs(y = "1-day Return",x="Index") +
+  coord_flip() 
+ggplotly(plot10)
+```
+
+***
+## <font size=5>功能11：外汇汇率收益率
+ <font size=3 face="楷体">
+&emsp;&emsp;绘制外汇涨跌幅排名柱状图，收益率低→高：绿-黑-红。
+ </font>
+```{r}
+forex=read.delim(paste(path,"function11.txt",sep='/'),header=T)
+#数据：function11.txt
+#数据来源：RESSET数据库——RESSET 外汇——汇率行情
+#exratecd      汇率代码     Exchange Rate Codedret
+#exratenm      汇率名称     Exchange Rate Name
+#chgpercg      涨跌幅     Change Percentage
+forex$exratecd<-as.character(forex$exratecd)
+#筛选美元汇率
+forex<-forex%>%
+  mutate(code=substr(forex$exratecd,1,3))%>%
+  filter(code=='USD')
+forex<-forex%>%
+  mutate(money=substr(forex$exratecd,5,7))
+forex$money[1]="USD"
+forex$chgpercg[1]=0#美元兑美元汇率为1，收益率为0
+df<-data.frame(money=forex$money,chgpercg=forex$chgpercg)
+#排序
+df<-df[with(df,order(chgpercg)),]
+#绘图
+plot11 <- ggplot(df, mapping=aes(x=reorder(money,chgpercg),y=chgpercg))+
+  geom_bar(stat="identity",width=0.7,fill=colorRampPalette(c("darkgreen","darkred"))(23))+
+  theme(panel.background=element_rect(fill='transparent')) +
+  geom_text(mapping = aes(label = round(df$chgpercg, digits = 4)),size=3,vjust=0,hjust=0.5) +
+  ggtitle("1 DAY RELATIVE PERFORMANCE[USD]") +
+  labs(y = "1-day Return",x="Forex")
+ggplotly(plot11)
+```
+
